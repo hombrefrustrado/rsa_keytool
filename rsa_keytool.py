@@ -110,6 +110,42 @@ def hybrid_decrypt(recipient_private, passphrase: bytes, package_b64: bytes) -> 
     plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=None)
     return plaintext
 
+def sign_file(private_key, infile_path: str, outfile_path: str):
+    # Leemos el mensaje
+    message = open(infile_path, 'rb').read()
+
+    # Firmamos usando PSS + SHA256
+    signature = private_key.sign(
+        message,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+
+    # Guardamos la firma en un archivo
+    save_bytes(outfile_path, signature)
+    print(f"File signed -> {outfile_path}")
+
+
+def verify_file(public_key, infile_path: str, signature_path: str):
+    message = open(infile_path, 'rb').read()
+    signature = open(signature_path, 'rb').read()
+
+    try:
+        public_key.verify(
+            signature,
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        print("Signature is valid")
+    except Exception as e:
+        print("Signature is INVALID")
 
 # --- File helpers to load keys -------------------------------------------------
 
@@ -176,8 +212,16 @@ def cmd_decrypt(args):
     save_bytes(args.outfile, plaintext, mode=0o600)
     print(f"Decrypted -> {args.outfile}")
 
+# --- Encriptar y desencriptar ---
+def cmd_sign(args):
+    priv = load_private_key(args.priv, passphrase=(args.passphrase.encode() if args.passphrase else None))
+    sign_file(priv, args.infile, args.outfile)
 
-# --- simple exporter for public keys (por si quieres colgarlas en Discord) -----
+def cmd_verify(args):
+    pub = load_public_key(args.pub)
+    verify_file(pub, args.infile, args.signature)
+
+# --- firmar y verificar -----
 
 def cmd_export_pub_bundle(args):
     pubdir = os.path.join(args.outdir, 'public')
@@ -218,6 +262,20 @@ def build_parser():
     dec.add_argument('--infile', type=str, required=True)
     dec.add_argument('--outfile', type=str, required=True)
     dec.set_defaults(func=cmd_decrypt)
+
+    sign = sub.add_parser('sign', help='Firmar un archivo con tu clave privada')
+    sign.add_argument('--priv', type=str, required=True, help='ruta al PEM de la clave privada')
+    sign.add_argument('--passphrase', type=str, default=None, help='passphrase si la clave privada está cifrada')
+    sign.add_argument('--infile', type=str, required=True)
+    sign.add_argument('--outfile', type=str, required=True)
+    sign.set_defaults(func=cmd_sign)
+
+    verify = sub.add_parser('verify', help='Verificar la firma de un archivo')
+    verify.add_argument('--pub', type=str, required=True, help='ruta al PEM de la clave pública')
+    verify.add_argument('--infile', type=str, required=True)
+    verify.add_argument('--signature', type=str, required=True)
+    verify.set_defaults(func=cmd_verify)
+
 
     exp = sub.add_parser('export-bundle', help='Exportar todas las claves publicas a un JSON para publicar')
     exp.add_argument('--outdir', type=str, default='keys')
